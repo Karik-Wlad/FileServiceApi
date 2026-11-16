@@ -9,6 +9,9 @@ builder.WebHost.UseUrls($"http://*:{port}");
 
 // Подключаем базу данных MySQL
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+
+Console.WriteLine($"DEBUG_CONNECTION_STRING: {connectionString}");
+
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString)));
 
