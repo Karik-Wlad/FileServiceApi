@@ -3,6 +3,10 @@ using FileServiceApi;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Настройка для облака: берем порт из переменной окружения (для Render), либо 8080 по умолчанию
+var port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
+builder.WebHost.UseUrls($"http://*:{port}");
+
 // Подключаем базу данных MySQL
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 builder.Services.AddDbContext<AppDbContext>(options =>
