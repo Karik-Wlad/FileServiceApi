@@ -104,29 +104,37 @@ namespace FileServiceApi.Controllers
         [HttpDelete("{id}")]
         public async Task<IActionResult> DeleteFile(int id)
         {
-            // 1. Ищем файл в базе
             var file = await _context.Files.FindAsync(id);
-            if (file == null)
-                return NotFound("Файл не найден.");
+            if (file == null) return NotFound("Файл не найден.");
 
-            // 2. Удаляем связанные ссылки из таблицы links
+            // 1. Удаляем физический файл из Supabase S3
+            var bucketName = _config["SupabaseS3:BucketName"]!;
+            // Достаем имя файла из ссылки (берем всё, что идет после последнего слэша)
+            var fileNameInS3 = file.StoragePath.Split('/').Last();
+
+            try
+            {
+                var deleteRequest = new DeleteObjectRequest
+                {
+                    BucketName = bucketName,
+                    Key = fileNameInS3
+                };
+                await _s3Client.DeleteObjectAsync(deleteRequest);
+            }
+            catch (Exception ex)
+            {
+                // Если файла в облаке уже нет, просто выводим в лог, но базу чистим
+                Console.WriteLine($"Ошибка удаления из S3: {ex.Message}");
+            }
+
+            // 2. Удаляем связанные ссылки и доступы из базы
             var links = _context.Links.Where(l => l.FileId == id);
             _context.Links.RemoveRange(links);
-
-            // 3. Удаляем связанные разрешения из таблицы access
             var accesses = _context.Accesses.Where(a => a.FileId == id);
             _context.Accesses.RemoveRange(accesses);
 
-            // 4. Удаляем физический файл с диска
-            if (System.IO.File.Exists(file.StoragePath))
-            {
-                System.IO.File.Delete(file.StoragePath);
-            }
-
-            // 5. Удаляем запись из базы данных
+            // 3. Удаляем запись из базы
             _context.Files.Remove(file);
-
-            // 6. Сохраняем изменения в базе
             await _context.SaveChangesAsync();
 
             return Ok($"Файл '{file.Filename}' успешно удален.");
@@ -154,11 +162,27 @@ namespace FileServiceApi.Controllers
             if (file.ExpiresAt.HasValue && file.ExpiresAt.Value < DateTime.Now)
                 return BadRequest("Срок хранения файла истек.");
 
-            if (!System.IO.File.Exists(file.StoragePath))
-                return NotFound("Физический файл отсутствует на сервере.");
+            var bucketName = _config["SupabaseS3:BucketName"]!;
+            var fileNameInS3 = file.StoragePath.Split('/').Last();
 
-            // Отдаем файл потоком (без загрузки в память)
-            return Redirect(file.StoragePath);
+            try
+            {
+                // Запрашиваем файл из S3
+                var getRequest = new GetObjectRequest
+                {
+                    BucketName = bucketName,
+                    Key = fileNameInS3
+                };
+
+                var response = await _s3Client.GetObjectAsync(getRequest);
+
+                // Отдаем файл прямо в поток телефона
+                return File(response.ResponseStream, file.FileType, file.Filename);
+            }
+            catch (AmazonS3Exception)
+            {
+                return NotFound("Файл не найден в облачном хранилище.");
+            }
         }
 
 
