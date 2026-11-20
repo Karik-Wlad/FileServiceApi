@@ -28,6 +28,8 @@ namespace FileServiceApi.Controllers
         {
             if (request.File == null || request.File.Length == 0)
                 return BadRequest("Файл не выбран.");
+            if (request.File.Length > 50 * 1024 * 1024)
+                return BadRequest("Файл слишком большой. Максимум 50 МБ.");
 
             // 1. Генерируем уникальное имя файла
             var uniqueFileName = Guid.NewGuid().ToString() + Path.GetExtension(request.File.FileName);

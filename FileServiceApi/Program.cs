@@ -34,6 +34,9 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
+// Включаем фонового робота-уборщика
+builder.Services.AddHostedService<CleanupService>();
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
