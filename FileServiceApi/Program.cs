@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using FileServiceApi;
+using Amazon.S3;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -14,6 +15,17 @@ Console.WriteLine($"DEBUG_CONNECTION_STRING: {connectionString}");
 
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseMySql(connectionString, ServerVersion.AutoDetect(connectionString)));
+
+// Настройка подключения к облачному хранилищу Supabase (S3)
+var s3Config = builder.Configuration.GetSection("SupabaseS3");
+var s3ClientConfig = new AmazonS3Config
+{
+    ServiceURL = s3Config["Endpoint"],
+    ForcePathStyle = true // Это обязательно для Supabase, иначе он не поймет запросы
+};
+var s3Client = new AmazonS3Client(s3Config["AccessKey"], s3Config["SecretKey"], s3ClientConfig);
+builder.Services.AddSingleton<IAmazonS3>(s3Client);
+
 
 // Add services to the container.
 

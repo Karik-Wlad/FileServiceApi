@@ -3,6 +3,8 @@ using Microsoft.EntityFrameworkCore;
 using System;
 using System.IO;
 using System.Threading.Tasks;
+using Amazon.S3;
+using Amazon.S3.Model;
 
 namespace FileServiceApi.Controllers
 {
@@ -11,43 +13,54 @@ namespace FileServiceApi.Controllers
     public class FilesController : ControllerBase
     {
         private readonly AppDbContext _context;
-
-        public FilesController(AppDbContext context)
+        private readonly IAmazonS3 _s3Client;
+        private readonly IConfiguration _config;
+        public FilesController(AppDbContext context, IAmazonS3 s3Client, IConfiguration config)
         {
             _context = context;
+            _s3Client = s3Client;
+            _config = config;
         }
 
         // POST: api/files/upload
         [HttpPost("upload")]
         public async Task<IActionResult> UploadFile([FromForm] FileUploadRequest request)
         {
-            // 1. Проверяем, пришел ли файл
             if (request.File == null || request.File.Length == 0)
                 return BadRequest("Файл не выбран.");
 
-            // 2. Создаем папку для файлов, если ее еще нет
-            var uploadsFolder = Path.Combine(Directory.GetCurrentDirectory(), "Uploads");
-            if (!Directory.Exists(uploadsFolder))
-                Directory.CreateDirectory(uploadsFolder);
-
-            // 3. Генерируем уникальное имя файла
+            // 1. Генерируем уникальное имя файла
             var uniqueFileName = Guid.NewGuid().ToString() + Path.GetExtension(request.File.FileName);
-            var filePath = Path.Combine(uploadsFolder, uniqueFileName);
+            var bucketName = _config["SupabaseS3:BucketName"]!;
 
-            // 4. Физически сохраняем файл на диск
-            using (var stream = new FileStream(filePath, FileMode.Create))
+            // 2. Загружаем файл в Supabase (S3)
+            using (var stream = request.File.OpenReadStream())
             {
-                await request.File.CopyToAsync(stream);
+                var putRequest = new PutObjectRequest
+                {
+                    BucketName = bucketName,
+                    Key = uniqueFileName,
+                    InputStream = stream,
+                    ContentType = request.File.ContentType,
+                    DisablePayloadSigning = true // Отключаем подпись, чтобы Supabase нормально принял файл
+                };
+                await _s3Client.PutObjectAsync(putRequest);
             }
 
-            // 5. Записываем информацию о файле в базу данных
+            // 3. Формируем публичную ссылку на файл
+            // Извлекаем ID проекта из Endpoint (oxsbkkjswixyeiiejsrm)
+            var endpoint = _config["SupabaseS3:Endpoint"]!;
+            var projectId = endpoint.Replace("https://", "").Split('.')[0];
+            var publicUrl = $"https://{projectId}.supabase.co/storage/v1/object/public/{bucketName}/{uniqueFileName}";
+
+            // 4. Сохраняем информацию в базу данных (вместо пути теперь ссылка)
             var fileEntity = new FileEntity
             {
                 UserId = request.UserId,
                 Filename = request.File.FileName,
                 FileType = request.File.ContentType,
                 SizeBytes = request.File.Length,
-                StoragePath = filePath,
+                StoragePath = publicUrl, // <-- Теперь тут ссылка
                 UploadedAt = DateTime.Now,
                 ExpiresAt = request.ExpiresAt
             };
@@ -55,7 +68,6 @@ namespace FileServiceApi.Controllers
             _context.Files.Add(fileEntity);
             await _context.SaveChangesAsync();
 
-            // 6. Возвращаем успешный ответ
             return Ok(fileEntity);
         }
         // GET: api/files/download/{token}
@@ -86,7 +98,7 @@ namespace FileServiceApi.Controllers
 
             // 6. Отдаем файл клиенту! 
             // PhysicalFile берет файл с диска и отдает с правильным именем (file.Filename)
-            return PhysicalFile(file.StoragePath, file.FileType, file.Filename);
+            return Redirect(file.StoragePath);
         }
         // DELETE: api/files/{id}
         [HttpDelete("{id}")]
@@ -146,7 +158,7 @@ namespace FileServiceApi.Controllers
                 return NotFound("Физический файл отсутствует на сервере.");
 
             // Отдаем файл потоком (без загрузки в память)
-            return PhysicalFile(file.StoragePath, file.FileType, file.Filename);
+            return Redirect(file.StoragePath);
         }
 
 
