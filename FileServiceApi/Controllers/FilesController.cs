@@ -223,6 +223,40 @@ namespace FileServiceApi.Controllers
             return Ok($"Доступ к файлу '{file.Filename}' предоставлен пользователю {targetUser.Email}.");
         }
 
+        // GET: api/files/{fileId}/access
+        // Получить список тех, кому открыт доступ к файлу
+        [HttpGet("{fileId}/access")]
+        public async Task<IActionResult> GetFileAccess(int fileId)
+        {
+            // Соединяем таблицу доступов с таблицей пользователей, чтобы получить email
+            var accesses = await _context.Accesses
+                .Where(a => a.FileId == fileId)
+                .Join(_context.Users,
+                      a => a.UserId,
+                      u => u.Id,
+                      (a, u) => new { UserId = u.Id, Email = u.Email })
+                .ToListAsync();
+
+            return Ok(accesses);
+        }
+
+        // DELETE: api/files/{fileId}/access/{userId}
+        // Отозвать доступ у пользователя
+        [HttpDelete("{fileId}/access/{userId}")]
+        public async Task<IActionResult> RevokeAccess(int fileId, int userId)
+        {
+            var access = await _context.Accesses
+                .FirstOrDefaultAsync(a => a.FileId == fileId && a.UserId == userId);
+
+            if (access == null)
+                return NotFound("Доступ не найден.");
+
+            _context.Accesses.Remove(access);
+            await _context.SaveChangesAsync();
+
+            return Ok("Доступ успешно отозван.");
+        }
+
 
 
 
