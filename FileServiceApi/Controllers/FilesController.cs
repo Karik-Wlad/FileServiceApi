@@ -141,14 +141,19 @@ namespace FileServiceApi.Controllers
 
             return Ok($"Файл '{file.Filename}' успешно удален.");
         }
-        // GET: api/files/user/{userId}
         [HttpGet("user/{userId}")]
         public async Task<IActionResult> GetUserFiles(int userId)
         {
-            // Ищем все файлы, которые принадлежат этому пользователю
+            // Находим все ID файлов, к которым у пользователя есть доступ
+            var sharedFileIds = await _context.Accesses
+                .Where(a => a.UserId == userId)
+                .Select(a => a.FileId)
+                .ToListAsync();
+
+            // Берем файлы, где он владелец ИЛИ где файл есть в списке расшаренных
             var files = await _context.Files
-                .Where(f => f.UserId == userId)
-                .OrderByDescending(f => f.UploadedAt) // Сначала новые
+                .Where(f => f.UserId == userId || sharedFileIds.Contains(f.Id))
+                .OrderByDescending(f => f.UploadedAt)
                 .ToListAsync();
 
             return Ok(files);
@@ -187,6 +192,45 @@ namespace FileServiceApi.Controllers
             }
         }
 
+        // POST: api/files/share
+        [HttpPost("share")]
+        public async Task<IActionResult> ShareFile([FromBody] ShareRequest request)
+        {
+            // 1. Проверяем, существует ли файл
+            var file = await _context.Files.FindAsync(request.FileId);
+            if (file == null) return NotFound("Файл не найден.");
 
+            // 2. Ищем пользователя, которому хотим дать доступ, по Email
+            var targetUser = await _context.Users.FirstOrDefaultAsync(u => u.Email == request.TargetEmail);
+            if (targetUser == null) return NotFound("Пользователь с таким email не найден в системе.");
+
+            // 3. Проверяем, не выдали ли мы уже доступ этому пользователю
+            var existingAccess = await _context.Accesses
+                .FirstOrDefaultAsync(a => a.FileId == request.FileId && a.UserId == targetUser.Id);
+
+            if (existingAccess != null) return BadRequest("Доступ этому пользователю уже предоставлен.");
+
+            // 4. Создаем запись о доступе
+            var access = new Access
+            {
+                FileId = request.FileId,
+                UserId = targetUser.Id
+            };
+
+            _context.Accesses.Add(access);
+            await _context.SaveChangesAsync();
+
+            return Ok($"Доступ к файлу '{file.Filename}' предоставлен пользователю {targetUser.Email}.");
+        }
+
+
+
+
+
+    }
+    public class ShareRequest
+    {
+        public int FileId { get; set; }
+        public string TargetEmail { get; set; } = string.Empty;
     }
 }
